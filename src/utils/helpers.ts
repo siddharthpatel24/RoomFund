@@ -33,3 +33,9 @@ export const getMonthProgress = (): number => {
   const progress = (now.getTime() - start.getTime()) / (end.getTime() - start.getTime());
   return Math.round(progress * 100);
 };
+
+// ✅ New helper to check if month has changed
+export const isNewMonth = (storedMonth: string): boolean => {
+  const currentMonth = new Date().toISOString().slice(0, 7); // e.g., '2025-07'
+  return currentMonth !== storedMonth;
+};

@@ -1,109 +1,183 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Toaster, toast } from 'react-hot-toast';
 import { Layout } from './components/Layout';
 import { Dashboard } from './components/Dashboard';
 import { ExpenseList } from './components/ExpenseList';
 import { ChoreTracker } from './components/ChoreTracker';
 import { Settings } from './components/Settings';
-import { useLocalStorage } from './hooks/useLocalStorage';
-import { generateId, getCurrentMonth } from './utils/helpers';
+import { generateId, getCurrentMonth, isNewMonth } from './utils/helpers';
 import type { Expense, MonthlyBudget, Chore, Roommate } from './types';
+import { auth, provider } from './firebase';
+import {
+  onAuthStateChanged,
+  signInWithPopup,
+  signOut,
+} from 'firebase/auth';
+import {
+  addExpense,
+  deleteExpense,
+  setMonthlyBudget,
+  getBudgetDoc,
+  addChore,
+  deleteChore,
+  addRoommate,
+  deleteRoommate,
+  userCollection,
+} from './lib/firestore';
+import {
+  onSnapshot,
+  getDoc,
+  query,
+  collection,
+} from 'firebase/firestore';
 
 function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
-  
-  // Data state with localStorage persistence
-  const [expenses, setExpenses] = useLocalStorage<Expense[]>('expenses', []);
-  const [monthlyBudget, setMonthlyBudget] = useLocalStorage<MonthlyBudget | null>('monthlyBudget', null);
-  const [chores, setChores] = useLocalStorage<Chore[]>('chores', []);
-  const [roommates, setRoommates] = useLocalStorage<Roommate[]>('roommates', [
-    { id: '1', name: 'You (Admin)', isAdmin: true, totalSpent: 0, chorePoints: 0, initials: 'YA' }
-  ]);
+  const [user, setUser] = useState<any>(null);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [monthlyBudget, setMonthlyBudgetState] = useState<MonthlyBudget | null>(null);
+  const [chores, setChores] = useState<Chore[]>([]);
+  const [roommates, setRoommates] = useState<Roommate[]>([]);
 
-  // Expense handlers
-  const handleAddExpense = (expenseData: Omit<Expense, 'id' | 'date'>) => {
-    const newExpense: Expense = {
-      ...expenseData,
-      id: generateId(),
-      date: new Date().toISOString().split('T')[0],
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
+
+    const unsubExpenses = onSnapshot(
+      userCollection(user.uid, 'expenses'),
+      (snap) => {
+        const data = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() })) as Expense[];
+        setExpenses(data);
+      }
+    );
+
+    const unsubChores = onSnapshot(
+      userCollection(user.uid, 'chores'),
+      (snap) => {
+        const data = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() })) as Chore[];
+        setChores(data);
+      }
+    );
+
+    const unsubRoommates = onSnapshot(
+      userCollection(user.uid, 'roommates'),
+      (snap) => {
+        const data = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() })) as Roommate[];
+        setRoommates(data);
+      }
+    );
+
+    getDoc(getBudgetDoc(user.uid)).then((docSnap) => {
+      if (docSnap.exists()) {
+        const storedBudget = docSnap.data() as MonthlyBudget;
+
+        if (isNewMonth(storedBudget.month)) {
+          onSnapshot(userCollection(user.uid, 'expenses'), (snap) => {
+            snap.docs.forEach((doc) => deleteExpense(user.uid, doc.id));
+          });
+
+          onSnapshot(userCollection(user.uid, 'chores'), (snap) => {
+            snap.docs.forEach((doc) => deleteChore(user.uid, doc.id));
+          });
+
+          const newBudget: MonthlyBudget = {
+            ...storedBudget,
+            month: new Date().toISOString().slice(0, 7),
+            totalAmount: 0,
+            isActive: true,
+            setDate: new Date().toISOString().split('T')[0],
+          };
+
+          setMonthlyBudget(user.uid, newBudget);
+          toast.success('🎉 New month started. Last month\'s data cleared.');
+        }
+
+        setMonthlyBudgetState(storedBudget);
+      }
+    });
+
+    return () => {
+      unsubExpenses();
+      unsubChores();
+      unsubRoommates();
     };
-    setExpenses(prev => [...prev, newExpense]);
-    toast.success('Expense added successfully!');
+  }, [user]);
+
+  const handleLogin = async () => {
+    try {
+      await signInWithPopup(auth, provider);
+    } catch (err) {
+      console.error(err);
+    }
   };
 
-  const handleDeleteExpense = (id: string) => {
-    setExpenses(prev => prev.filter(expense => expense.id !== id));
-    toast.success('Expense deleted');
+  const handleLogout = async () => {
+    await signOut(auth);
   };
 
-  // Budget handlers
-  const handleSetBudget = (amount: number) => {
-    const newBudget: MonthlyBudget = {
+  const handleAddExpense = async (data: Omit<Expense, 'id' | 'date'>) => {
+    await addExpense(user.uid, {
+      ...data,
+      date: new Date().toISOString().split('T')[0],
+    });
+  };
+
+  const handleDeleteExpense = async (id: string) => {
+    await deleteExpense(user.uid, id);
+  };
+
+  const handleSetBudget = async (amount: number) => {
+    await setMonthlyBudget(user.uid, {
       id: generateId(),
       month: getCurrentMonth(),
       year: new Date().getFullYear(),
       totalAmount: amount,
       setDate: new Date().toISOString().split('T')[0],
       isActive: true,
-    };
-    setMonthlyBudget(newBudget);
-    toast.success(`Monthly budget set to ₹${amount.toLocaleString()}`);
+    });
+    toast.success('Budget updated');
   };
 
   const handleResetBudget = () => {
-    setMonthlyBudget(null);
-    toast.success('Budget reset');
+    setMonthlyBudgetState(null);
   };
 
-  // Chore handlers
-  const handleAddChore = (choreData: Omit<Chore, 'id'>) => {
-    const newChore: Chore = {
-      ...choreData,
-      id: generateId(),
-    };
-    setChores(prev => [...prev, newChore]);
-    toast.success('Chore added successfully!');
+  const handleAddChore = async (data: Omit<Chore, 'id'>) => {
+    await addChore(user.uid, data);
   };
 
-  const handleCompleteChore = (id: string) => {
-    setChores(prev => prev.map(chore => 
-      chore.id === id ? { ...chore, completed: true } : chore
-    ));
-    toast.success('Chore completed! 🎉');
+  const handleCompleteChore = async (id: string) => {
+    const updated = chores.find((c) => c.id === id);
+    if (updated) {
+      await addChore(user.uid, { ...updated, completed: true });
+    }
   };
 
-  const handleDeleteChore = (id: string) => {
-    setChores(prev => prev.filter(chore => chore.id !== id));
-    toast.success('Chore deleted');
+  const handleDeleteChore = async (id: string) => {
+    await deleteChore(user.uid, id);
   };
 
-  // Roommate handlers
-  const handleAddRoommate = (roommateData: Omit<Roommate, 'id' | 'totalSpent' | 'chorePoints'>) => {
-    const newRoommate: Roommate = {
-      ...roommateData,
-      id: generateId(),
+  const handleAddRoommate = async (data: Omit<Roommate, 'id' | 'totalSpent' | 'chorePoints'>) => {
+    await addRoommate(user.uid, {
+      ...data,
       totalSpent: 0,
       chorePoints: 0,
-    };
-    setRoommates(prev => [...prev, newRoommate]);
-    toast.success(`${roommateData.name} added as roommate`);
+    });
   };
 
-  const handleRemoveRoommate = (id: string) => {
-    const roommate = roommates.find(r => r.id === id);
-    if (roommate?.isAdmin) {
-      toast.error('Cannot remove admin user');
-      return;
-    }
-    setRoommates(prev => prev.filter(r => r.id !== id));
-    toast.success('Roommate removed');
+  const handleRemoveRoommate = async (id: string) => {
+    await deleteRoommate(user.uid, id);
   };
 
-  // Data management
-  const handleClearData = () => {
+  const handleClearData = async () => {
     setExpenses([]);
     setChores([]);
-    toast.success('All data cleared');
   };
 
   const renderContent = () => {
@@ -119,12 +193,7 @@ function App() {
           />
         );
       case 'expenses':
-        return (
-          <ExpenseList
-            expenses={expenses}
-            onDeleteExpense={handleDeleteExpense}
-          />
-        );
+        return <ExpenseList expenses={expenses} onDeleteExpense={handleDeleteExpense} />;
       case 'chores':
         return (
           <ChoreTracker
@@ -154,22 +223,19 @@ function App() {
 
   return (
     <>
+      <div style={{ padding: '1rem', textAlign: 'right' }}>
+        {user ? (
+          <button onClick={handleLogout}>Logout ({user.displayName})</button>
+        ) : (
+          <button onClick={handleLogin}>Login with Google</button>
+        )}
+      </div>
+
       <Layout activeTab={activeTab} onTabChange={setActiveTab}>
         {renderContent()}
       </Layout>
-      <Toaster
-        position="top-right"
-        toastOptions={{
-          duration: 3000,
-          style: {
-            background: 'var(--toast-bg)',
-            color: 'var(--toast-color)',
-            borderRadius: '12px',
-            padding: '16px',
-            boxShadow: '0 10px 25px rgba(0, 0, 0, 0.1)',
-          },
-        }}
-      />
+
+      <Toaster position="top-right" toastOptions={{ duration: 3000 }} />
     </>
   );
 }
