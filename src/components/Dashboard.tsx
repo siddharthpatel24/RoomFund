@@ -1,7 +1,6 @@
 // src/components/Dashboard.tsx
 
 import React from 'react';
-import { formatCurrency } from '../utils/helpers';
 import type { Expense, MonthlyBudget, Roommate } from '../types';
 
 interface DashboardProps {
@@ -19,20 +18,15 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onAddExpense,
   onSetBudget,
 }) => {
-  const totalSpent = expenses.reduce((sum, e) => sum + e.amount, 0);
-  const remaining = monthlyBudget ? monthlyBudget.totalAmount - totalSpent : 0;
-
   return (
     <div className="space-y-6">
       <div className="bg-white shadow-md p-4 rounded-lg">
         <h2 className="text-xl font-bold mb-2">Monthly Budget</h2>
         {monthlyBudget ? (
           <>
-            <p>Total: {formatCurrency(monthlyBudget.totalAmount)}</p>
-            <p>Spent: {formatCurrency(totalSpent)}</p>
-            <p className="text-green-600 font-semibold">
-              Remaining: {formatCurrency(remaining)}
-            </p>
+            <p>Total: ₹{monthlyBudget.totalAmount.toLocaleString()}</p>
+            <p>Month: {monthlyBudget.month}</p>
+            <p>Set on: {monthlyBudget.setDate}</p>
           </>
         ) : (
           <button
