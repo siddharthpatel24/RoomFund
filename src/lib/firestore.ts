@@ -1,14 +1,13 @@
 // src/lib/firestore.ts
 
 import {
+  collection,
   doc,
   setDoc,
-  deleteDoc,
-  collection,
   getDocs,
+  deleteDoc,
   updateDoc,
-  writeBatch,
-  CollectionReference,
+  onSnapshot,
   DocumentReference,
 } from 'firebase/firestore';
 
@@ -23,20 +22,19 @@ export const userCollection = (uid: string, sub: string) => {
 
 // 📄 Budget document reference
 export const getBudgetDoc = (uid: string): DocumentReference => {
-  return doc(db, 'users', uid, 'monthlyBudget', 'active');
+  return doc(db, 'users', uid, 'budget', 'current');
 };
 
 // 💰 Expense
-export const addExpense = async (uid: string, expense: Omit<Expense, 'id'>) => {
+export const addExpense = async (uid: string, data: Omit<Expense, 'id'>) => {
   const id = generateId();
-  const docRef = doc(db, 'users', uid, 'expenses', id);
-  await setDoc(docRef, { ...expense, id });
+  const ref = doc(db, 'users', uid, 'expenses', id);
+  await setDoc(ref, { ...data, id });
   await updateRemaining(uid);
 };
 
 export const deleteExpense = async (uid: string, id: string) => {
-  const docRef = doc(db, 'users', uid, 'expenses', id);
-  await deleteDoc(docRef);
+  await deleteDoc(doc(db, 'users', uid, 'expenses', id));
   await updateRemaining(uid);
 };
 
@@ -50,37 +48,49 @@ export const setMonthlyBudget = async (uid: string, budget: MonthlyBudget) => {
 // 🧹 Chores
 export const addChore = async (uid: string, chore: Omit<Chore, 'id'> & { id?: string }) => {
   const id = chore.id || generateId();
-  const docRef = doc(db, 'users', uid, 'chores', id);
-  await setDoc(docRef, { ...chore, id });
+  const ref = doc(db, 'users', uid, 'chores', id);
+  await setDoc(ref, { ...chore, id });
 };
 
 export const deleteChore = async (uid: string, id: string) => {
-  const docRef = doc(db, 'users', uid, 'chores', id);
-  await deleteDoc(docRef);
+  await deleteDoc(doc(db, 'users', uid, 'chores', id));
 };
 
 // 👥 Roommates
 export const addRoommate = async (uid: string, roommate: Omit<Roommate, 'id'>) => {
   const id = generateId();
-  const docRef = doc(db, 'users', uid, 'roommates', id);
-  await setDoc(docRef, { ...roommate, id });
+  const ref = doc(db, 'users', uid, 'roommates', id);
+  await setDoc(ref, { ...roommate, id });
 };
 
 export const deleteRoommate = async (uid: string, id: string) => {
-  const docRef = doc(db, 'users', uid, 'roommates', id);
-  await deleteDoc(docRef);
+  await deleteDoc(doc(db, 'users', uid, 'roommates', id));
 };
 
-// 📊 Budget Auto-Updater
+// 📊 Update Remaining Budget
 export const updateRemaining = async (uid: string) => {
   const expenseSnap = await getDocs(userCollection(uid, 'expenses'));
-  const expenses = expenseSnap.docs.map((doc) => doc.data() as Expense);
+  const expenses = expenseSnap.docs.map(doc => doc.data() as Expense);
   const totalSpent = expenses.reduce((sum, e) => sum + e.amount, 0);
 
   const budgetRef = getBudgetDoc(uid);
   try {
     await updateDoc(budgetRef, { remaining: totalSpent });
-  } catch (err) {
-    console.warn('Budget doc missing. Skipping updateRemaining.');
+  } catch (e) {
+    console.warn('No budget set yet. Skipping remaining update.');
   }
+};
+
+// 🔁 Clear previous month's data
+export const clearMonthlyData = async (uid: string) => {
+  const collections = ['expenses', 'chores', 'roommates'];
+
+  for (const name of collections) {
+    const qSnap = await getDocs(userCollection(uid, name));
+    for (const d of qSnap.docs) {
+      await deleteDoc(doc(db, 'users', uid, name, d.id));
+    }
+  }
+
+  await deleteDoc(getBudgetDoc(uid));
 };
